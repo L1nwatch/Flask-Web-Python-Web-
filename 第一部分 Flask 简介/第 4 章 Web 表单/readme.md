@@ -146,3 +146,38 @@ def index():
     return render_template('index.html', form=form, name=session.get('name'))
 ```
 
+推荐使用 `url_for()` 生成 URL,因为这 个函数使用 URL 映射生成 URL，从而保证 URL 和定义的路由兼容，而且修改路由名字后依然可用。
+
+`url_for()` 函数的第一个且唯一必须指定的参数是端点名，即路由的内部名字。默认情况下，路由的端点是相应视图函数的名字。
+
+## 4.6 Flash 消息
+
+请求完成后，有时需要让用户知道状态发生了变化。这里可以使用确认消息、警告或者错误提醒。
+
+flash() 函数可实现这种效果：
+
+```python
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    form = NameForm()
+    if form.validate_on_submit():
+        old_name = session.get('name')
+        if old_name is not None and old_name != form.name.data:
+            flash('Looks like you have changed your name!')
+        session['name'] = form.name.data
+        return redirect(url_for('index'))
+    return render_template('index.html', form=form, name=session.get('name'))
+```
+
+仅调用 flash() 函数并不能把消息显示出来，程序使用的模板要渲染这些消息。最好在基模板中渲染 Flash 消息，因为这样所有页面都能使用这些消息。Flask 把 `get_flashed_ messages()` 函数开放给模板，用来获取并渲染消息。
+
+```html
+{% for message in get_flashed_messages() %}
+<div class="alert alert-warning">
+  <button type="button" class="close" data-dismiss="alert">&times;</button>
+  {{ message }}
+</div>
+{% endfor %}
+```
+
+在模板中使用循环是因为在之前的请求循环中每次调用 flash() 函数时都会生成一个消息, 所以可能有多个消息在排队等待显示。`get_flashed_messages()` 函数获取的消息在下次调 用时不会再次返回,因此 Flash 消息只显示一次,然后就消失了。
