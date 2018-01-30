@@ -160,3 +160,119 @@ def create_app(config_name):
 
 ### 7.3.2 在蓝本中实现程序功能
 
+转换成程序工厂函数的操作让定义路由变复杂了。在单脚本程序中,程序实例存在于全 局作用域中,路由可以直接使用 app.route 修饰器定义。但现在程序在运行时创建,只 有调用 create_app() 之后才能使用 app.route 修饰器,这时定义路由就太晚了。和路由 一样,自定义的错误页面处理程序也面临相同的困难,因为错误页面处理程序使用 app. errorhandler 修饰器定义。
+
+幸好 Flask 使用蓝本提供了更好的解决方法。蓝本和程序类似,也可以定义路由。不同的 是,在蓝本中定义的路由处于休眠状态,直到蓝本注册到程序上后,路由才真正成为程序 的一部分。使用位于全局作用域中的蓝本时,定义路由的方法几乎和单脚本程序一样。
+
+和程序一样,蓝本可以在单个文件中定义,也可使用更结构化的方式在包中的多个模块中 创建。
+
+```python
+from flask import Blueprint
+
+main = Blueprint('main', __name__)
+
+from . import views, errors
+```
+
+通过实例化一个 Blueprint 类对象可以创建蓝本。这个构造函数有两个必须指定的参数: 蓝本的名字和蓝本所在的包或模块。和程序一样,大多数情况下第二个参数使用 Python 的 `__name__` 变量即可。
+
+程序的路由保存在包里的 app/main/views.py 模块中,而错误处理程序保存在 app/main/ errors.py 模块中。导入这两个模块就能把路由和错误处理程序与蓝本关联起来。注意,这 些模块在 `app/main/__init__.py` 脚本的末尾导入,这是为了避免循环导入依赖,因为在 views.py 和 errors.py 中还要导入蓝本 main。
+
+蓝本在工厂函数 create_app() 中注册到程序上,如示例 7-5 所示。
+
+```python
+def create_app(config_name): 
+    # ...
+    from .main import main as main_blueprint
+    app.register_blueprint(main_blueprint)
+    return app
+```
+
+`app/main/errors.py`:蓝本中的错误处理程序
+
+```python
+from flask import render_template
+from . import main
+
+@main.app_errorhandler(404)
+def page_not_found(e):
+    return render_template('404.html'), 404
+
+@main.app_errorhandler(500)
+def internal_server_error(e):
+    return render_template('500.html'), 500
+```
+
+在蓝本中编写错误处理程序稍有不同,如果使用 errorhandler 修饰器,那么只有蓝本中的错误才能触发处理程序。要想注册程序全局的错误处理程序,必须使用 app_errorhandler。
+
+url_for() 函数的用法不同。你可能还记得,url_for() 函数的第一 个参数是路由的端点名,在程序的路由中,默认为视图函数的名字。例如,在单脚本程序 中,index() 视图函数的 URL 可使用 url_for('index') 获取。
+
+在蓝本中就不一样了,Flask 会为蓝本中的全部端点加上一个命名空间,这样就可以在不同的蓝本中使用相同的端点名定义视图函数,而不会产生冲突。命名空间就是蓝本的名字 (Blueprint 构造函数的第一个参数),所以视图函数 index() 注册的端点名是 main.index,其 URL 使用 url_for('main.index') 获取。
+
+url_for() 函数还支持一种简写的端点形式,在蓝本中可以省略蓝本名,例如 url_for('. index')。在这种写法中,命名空间是当前请求所在的蓝本。这意味着同一蓝本中的重定向 可以使用简写形式,但跨蓝本的重定向必须使用带有命名空间的端点名。为了完全修改程序的页面,表单对象也要移到蓝本中,保存于 app/main/forms.py 模块。
+
+## 7.4 启动脚本
+
+顶级文件夹中的 manage.py 文件用于启动程序。
+
+```python
+#!/usr/bin/env python
+...
+```
+
+出于便利,脚本中加入了 shebang 声明,所以在基于 Unix 的操作系统中可以通过 ./manage. py 执行脚本,而不用使用复杂的 python manage.py。
+
+## 7.5 需求文件
+
+## 7.6 单元测试
+
+`tests/test_basics.py`:单元测试
+
+```python
+import unittest
+from flask import current_app
+from app import create_app, db
+
+class BasicsTestCase(unittest.TestCase):
+    def setUp(self):
+        self.app = create_app('testing')
+        self.app_context = self.app.app_context()
+        self.app_context.push()
+        db.create_all()
+
+    def tearDown(self):
+        db.session.remove()
+        db.drop_all()
+        self.app_context.pop()
+
+    def test_app_exists(self):
+        self.assertFalse(current_app is None)
+
+    def test_app_is_testing(self):
+        self.assertTrue(current_app.config['TESTING'])
+```
+
+setUp() 方法尝试创建一个测试环境,类似于运行中的程序。首先,使用测试配置创建程 序,然后激活上下文。这一步的作用是确保能在测试中使用 current_app,像普通请求一 样。然后创建一个全新的数据库,以备不时之需。数据库和程序上下文在 tearDown() 方法 中删除。
+
+第一个测试确保程序实例存在。第二个测试确保程序在测试配置中运行。若想把 tests 文 件夹作为包使用,需要添加 `tests/__init__.py` 文件,不过这个文件可以为空,因为 unittest 包会扫描所有模块并查找测试。
+
+为了运行单元测试,你可以在 manage.py 脚本中添加一个自定义命令。
+
+```python
+@manager.command
+def test():
+    """Run the unit tests."""
+    import unittest
+    tests = unittest.TestLoader().discover('tests')
+    unittest.TextTestRunner(verbosity=2).run(tests)
+```
+
+manager.command 修饰器让自定义命令变得简单。修饰函数名就是命令名,函数的文档字符 串会显示在帮助消息中。
+
+## 7.7 创建数据库
+
+不管从哪里获取数据库 URL,都要在新数据库中创建数据表。如果使用 Flask-Migrate 跟 踪迁移,可使用如下命令创建数据表或者升级到最新修订版本:
+
+```python
+(venv) $ python manage.py db upgrade
+```
