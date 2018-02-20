@@ -330,3 +330,35 @@ class User(UserMixin, db.Model):
 
 ### 8.6.2 发送确认邮件
 
+默认情况下,url_for() 生成相对 URL,例如 url_for('auth.confirm',回的字符串是 '/auth/confirm/abc'。这显然不是能够在电子邮件中发送的正确 URL。相 对 URL 在网页的上下文中可以正常使用,因为通过添加当前页面的主机名和端口号,浏 览器会将其转换成绝对 URL。但通过电子邮件发送 URL 时,并没有这种上下文。添加到 url_for() 函数中的 _external=True 参数要求程序生成完整的 URL,其中包含协议(http:// 或 https://)、主机名和端口。
+
+每个程序都可以决定用户确认账户之前可以做哪些操作。比如,允许未确认的用户登录,但只显示一个页面,这个页面要求用户在获取权限之前先确认账户。这一步可使用 Flask 提供的 before_request 钩子完成,我们在第 2 章就已经简单介绍过钩 子的相关内容。对蓝本来说,before_request 钩子只能应用到属于蓝本的请求上。若想在 蓝本中使用针对程序全局请求的钩子,必须使用 before_app_request 修饰器。示例 8-22 展 示了如何实现这个处理程序。
+
+示例 8-22 app/auth/views.py:在 before_app_request 处理程序中过滤未确认的账户
+
+```python
+@auth.before_app_request
+def before_request():
+    if current_user.is_authenticated \
+            and not current_user.confirmed \
+            and request.endpoint \
+            and request.blueprint != 'auth' \
+            and request.endpoint != 'static':
+        return redirect(url_for('auth.unconfirmed'))
+
+
+@auth.route('/unconfirmed')
+def unconfirmed():
+    if current_user.is_anonymous or current_user.confirmed:
+        return redirect(url_for('main.index'))
+    return render_template('auth/unconfirmed.html')
+```
+
+>   如果 before_request 或 before_app_request 的回调返回响应或重定向,Flask 会直接将其发送至客户端,而不会调用请求的视图函数。因此,这些回调可 在必要时拦截请求。
+
+## 8.7 管理账户
+
+*   修改密码
+*   重设密码
+*   修改电子邮件地址
+
