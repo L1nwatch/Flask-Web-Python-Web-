@@ -179,7 +179,7 @@ pagination_widget 宏可放在 index.html 和 user.html 中的 _posts.html 模�
 {% endif %}
 ```
 
-### 11.4 使用Markdown和Flask-PageDown支持富文本文章
+## 11.4 使用Markdown和Flask-PageDown支持富文本文章
 
 对于发布短消息和状态更新来说，纯文本足够用了，但如果用户想发布长文章，就会觉得在格式上受到了限制。本节我们要将输入文章的多行文本输入框升级，让其支持 Markdown（http://daringfireball.net/projects/markdown/）语法，还要添加富文本文章的预览功能。
 
@@ -229,3 +229,64 @@ Markdown 预览使用 PageDown 库生成，因此要在模板中修改。Flask-P
 ```
 
 做了上述修改后，在多行文本字段中输入 Markdown 格式的文本会被立即渲染成 HTML 并显示在输入框下方。
+
+### 11.4.2　在服务器上处理富文本
+
+安全起见，只提交 Markdown 源文本，在服务器上使用 Markdown（使用 Python 编写的 Markdown 到 HTML 转换程序）将其转换成 HTML。得到 HTML 后，再使用 Bleach 进行清理，确保其中只包含几个允许使用的 HTML 标签。
+
+把 Markdown 格式的博客文章转换成 HTML 的过程可以在 `_posts.html` 模板中完成，但这么做效率不高，因为每次渲染页面时都要转换一次。为了避免重复工作，我们可在创建博客文章时做一次性转换。转换后的博客文章 HTML 代码缓存在 Post 模型的一个新字段中，在模板中可以直接调用。
+
+`app/models.py`：在 Post 模型中处理 Markdown 文本
+
+```python
+from markdown import markdown
+import bleach
+class Post(db.Model):
+   # ...
+   body_html = db.Column(db.Text)
+   # ...
+   @staticmethod
+   def on_changed_body(target, value, oldvalue, initiator):
+   		allowed_tags = ['a', 'abbr', 'acronym', 'b', 'blockquote', 'code', 'em', 'i', 'li', 'ol', 'pre', 'strong', 'ul', 'h1', 'h2', 'h3', 'p']
+		target.body_html = bleach.linkify(bleach.clean(markdown(value, output_format='html'),tags=allowed_tags, strip=True))
+	db.event.listen(Post.body, 'set', Post.on_changed_body)
+```
+
+`on_changed_body` 函数注册在 body 字段上，是 SQLAlchemy“set”事件的监听程序，这意味着只要这个类实例的 body 字段设了新值，函数就会自动被调用。`on_changed_body` 函数把 body 字段中的文本渲染成 HTML 格式，结果保存在 `body_html` 中，自动且高效地完成 Markdown 文本到 HTML 的转换。
+
+转换的最后一步由 `linkify()` 函数完成，这个函数由 Bleach 提供，把纯文本中的 URL 转换成适当的 `<a>` 链接。最后一步是很有必要的，因为 Markdown 规范没有为自动生成链接提供官方支持。PageDown 以扩展的形式实现了这个功能，因此在服务器上要调用 linkify() 函数。
+
+渲染 HTML 格式内容时使用 `| safe` 后缀，其目的是告诉 Jinja2 不要转义 HTML 元素。出于安全考虑，默认情况下 Jinja2 会转义所有模板变量。Markdown 转换成的 HTML 在服务器上生成，因此可以放心渲染。
+
+## 11.5　博客文章的固定链接
+
+某些类型的程序使用可读性高的字符串而不是数字 ID 构建固定链接。除了数字 ID 之外，程序还为博客文章起了个独特的字符串别名。
+
+```python
+post = Post.query.get_or_404(id)
+```
+
+## 11.6　博客文章编辑器
+
+与博客文章相关的最后一个功能是文字编辑器，它允许用户编辑自己的文章。博客文章编辑器显示在单独的页面中。在这个页面的上部会显示文章的当前版本，以供参考，下面跟着一个 Markdown 编辑器，用于修改 Markdown 源。这个编辑器基于 Flask-PageDown 实现，所以页面下部还会显示一个编辑后的文章预览。
+
+`app/main/views.py`：编辑博客文章的路由
+
+```python
+@main.route('/edit/<int:id>', methods=['GET', 'POST'])
+@login_required
+def edit(id):
+	post = Post.query.get_or_404(id)
+	if current_user != post.author and not current_user.can(Permission.ADMINISTER):
+		abort(403)
+   	form = PostForm()
+   	if form.validate_on_submit():
+   		post.body = form.body.data
+   		db.session.add(post)
+   		flash('The post has been updated.')
+   		return redirect(url_for('post', id=post.id))
+   	form.body.data = post.body
+   	return render_template('edit_post.html', form=form)
+```
+
+这个视图函数的作用是只允许博客文章的作者编辑文章，但管理员例外，管理员能编辑所有用户的文章。如果用户试图编辑其他用户的文章，视图函数会返回 403 错误。这里使用的 PostForm 表单类和首页中使用的是同一个。
