@@ -91,5 +91,143 @@ class TestingConfig(Config): #...
 
 ### 15.2.2 测试Web服务
 
+Flask测试客户端还可用来测试REST Web服务。示例15-5是一个单元测试示例,包含了两个测试。
+
+`tests/test_api.py`:使用 Flask 测试客户端测试 REST API
+
+```python
+class APITestCase(unittest.TestCase):
+    # ...
+    def get_api_headers(self, username, password):
+        return {
+            'Authorization':
+            'Basic ' + b64encode(
+                (username + ':' + password).encode('utf-8')).decode('utf-8'),
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+    def test_no_auth(self):
+        response = self.client.get(url_for('api.get_posts'),
+                                   content_type='application/json')
+        self.assertTrue(response.status_code == 401)
+
+        def test_posts(self): # 添加一个用户
+            r = Role.query.filter_by(name='User').first() self.assertIsNotNone(r)
+            u = User(email='john@example.com', password='cat', confirmed=True,
+                     ￼￼￼role=r)
+            db.session.add(u)
+            db.session.commit()
+            # 写一篇文章
+            response = self.client.post(
+                url_for('api.new_post'),
+                headers=self.get_auth_header('john@example.com', 'cat'),
+                data=json.dumps({'body': 'body of the *blog* post'}))
+            self.assertTrue(response.status_code == 201)
+            url = response.headers.get('Location')
+            self.assertIsNotNone(url)
+            # 获取刚发布的文章 response = self.client.get(
+            url,
+            headers=self.get_auth_header('john@example.com', 'cat'))
+            self.assertTrue(response.status_code == 200)
+            json_response = json.loads(response.data.decode('utf-8'))
+            self.assertTrue(json_response['url'] == url)
+            self.assertTrue(json_response['body'] == 'body of the *blog* post')
+            self.assertTrue(json_response['body_html'] ==
+                            '<p>body of the <em>blog</em> post</p>')
+```
+
+## 15.3 使用Selenium进行端到端测试
+
+Werkzeug Web 服务器本身就有停止选项,但由于服务器运行在单独的线程中,关闭服务器的唯一方法是 发送一个普通的 HTTP 请求。示例 15-6 实现了关闭服务器的路由。
+
+`app/main/views.py`:关闭服务器的路由
+
+```python
+@main.route('/shutdown')
+def server_shutdown():
+    if not current_app.testing:
+        abort(404)
+    shutdown = request.environ.get('werkzeug.server.shutdown')
+    if not shutdown:
+        abort(500)
+    shutdown()
+    return 'Shutting down...'
+```
+
+`tests/test_selenium.py`:使用 Selenium 运行测试的框架
+
+```python
+from selenium import webdriver
+class SeleniumTestCase(unittest.TestCase):
+	client = None
+
+	@classmethod
+	def setUpClass(cls):
+	# 启动 Firefox
+	try:
+		cls.client = webdriver.Firefox()
+	except:
+		pass
+
+	# 如果无法启动浏览器,则跳过这些测试
+	if cls.client:
+		# 创建程序
+		cls.app = create_app('testing')
+		cls.app_context = cls.app.app_context()
+		cls.app_context.push()
+		
+		# 禁止日志,保持输出简洁
+		import logging
+		logger = logging.getLogger('werkzeug')
+		logger.setLevel("ERROR")
+
+		# 创建数据库,并使用一些虚拟数据填充
+		db.create_all()
+		Role.insert_roles()
+		User.generate_fake(10)
+		Post.generate_fake(10)
+
+		# 添加管理员
+		admin_role = Role.query.filter_by(permissions=0xff).first()
+
+		admin = User(email='john@example.com', username='john', password='cat', role=admin_role, confirmed=True)
+		db.session.add(admin)
+		db.session.commit()
+
+		# 在一个线程中启动 Flask 服务器
+		threading.Thread(target=cls.app.run).start()
+
+
+    @classmethod
+    def tearDownClass(cls):
+		if cls.client:
+		# 关闭 Flask 服务器和浏览器
+		cls.client.get('http://localhost:5000/shutdown')
+		cls.client.close()
+
+		# 销毁数据库
+		db.drop_all()
+		db.session.remove()
+
+		# 删除程序上下文
+		cls.app_context.pop()
+
+	def setUp(self):
+		if not self.client:
+			self.skipTest('Web browser not available')
+
+    def tearDown(self):
+		pass
+```
+
+`tests/test_selenium.py`:Selenium 单元测试示例
+
+```python
+self.client.find_element_by_link_text('Log In').click()
+self.client.find_element_by_name('email').send_keys('john@example.com')
+```
+
+## 15.4 值得测试吗
+
 
 
