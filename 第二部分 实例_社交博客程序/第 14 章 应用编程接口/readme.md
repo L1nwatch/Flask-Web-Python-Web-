@@ -339,3 +339,111 @@ def new_post():
 
 ### 14.2.6 实现资源端点
 
+用来防止未授权用户创建新博客文章的 `permission_required` 修饰器和程序中使用的类似, 但会针对 API 蓝本进行自定义。具体实现如示例 14-19 所示。
+
+`app/api_1_0/decorators.py:permission_required` 修饰器：
+
+```python
+def permission_required(permission):
+    def decorator(f):
+        @wraps(f)
+        def decorated_function(*args, **kwargs):
+            if not g.current_user.can(permission):
+                return forbidden('Insufficient permissions')
+            return f(*args, **kwargs)
+        return decorated_function
+    return decorator
+```
+
+博客文章 PUT 请求的处理程序用来更新现有资源,如示例 14-20 所示。
+
+`app/api_1_0/posts.py`:文章资源 PUT 请求的处理程序
+
+```python
+@api.route('/posts/<int:id>', methods=['PUT'])
+@permission_required(Permission.WRITE_ARTICLES)
+def edit_post(id):
+    post = Post.query.get_or_404(id)
+    if g.current_user != post.author and \
+    not g.current_user.can(Permission.ADMINISTER): return forbidden('Insufficient permissions')
+    post.body = request.json.get('body', post.body)
+    db.session.add(post)
+    return jsonify(post.to_json())
+```
+
+### 14.2.7 分页大型资源集合
+
+`app/api_1_0/posts.py`:分页文章资源
+
+```python
+@api.route('/posts/')
+def get_posts():
+    page = request.args.get('page', 1, type=int)
+    pagination = Post.query.paginate(
+        page, per_page=current_app.config['FLASKY_POSTS_PER_PAGE'],
+        error_out=False)
+    posts = pagination.items
+    prev = None
+    if pagination.has_prev:
+        prev = url_for('api.get_posts', page=page-1, _external=True)
+        next = None
+        if pagination.has_next:
+            next = url_for('api.get_posts', page=page+1, _external=True)
+            return jsonify({
+                'posts': [post.to_json() for post in posts],
+                'prev': prev,
+                'next': next,
+                'count': pagination.total
+            })
+```
+
+### 14.2.8 使用 `HTTPie` 测试 Web 服务
+
+常使用的两个在命令行中测试 Web 服务的客户端是 curl 和 HTTPie。后者的命令行更简洁,可读性也更高。HTTPie 使用 pip 安装:
+
+```shell
+(venv) $ pip install httpie
+```
+
+GET 请求可按照如下的方式发起:
+
+```shell
+(venv) $ http --json --auth <email>:<password> GET \
+> http://127.0.0.1:5000/api/v1.0/posts
+HTTP/1.0 200 OK
+Content-Length: 7018
+Content-Type: application/json
+Date: Sun, 22 Dec 2013 08:11:24 GMT
+Server: Werkzeug/0.9.4 Python/2.7.3
+{
+"posts": [
+... ],
+"prev": null
+"next": "http://127.0.0.1:5000/api/v1.0/posts/?page=2",
+"count": 150
+}
+```
+
+匿名用户可发送空邮件地址和密码以发起相同的请求:
+
+```shell
+(venv) $ http --json --auth : GET http://127.0.0.1:5000/api/v1.0/posts/
+```
+
+下面这个命令发送 POST 请求以添加一篇新博客文章:
+
+```shell
+ (venv) $ http --auth <email>:<password> --json POST \
+```
+
+要想使用认证令牌,可向 `/api/v1.0/token` 发送请求:
+
+```shell
+(venv) $ http --auth <email>:<password> --json GET \
+```
+
+在接下来的 1 小时中,这个令牌可用于访问 API,请求时要和空密码一起发送:
+
+```shell
+(venv) $ http --json --auth eyJpYXQ...: GET http://127.0.0.1:5000/api/v1.0/posts/
+```
